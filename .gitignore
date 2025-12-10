@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+.state/
+*.log
+.DS_Store
+.npm/
+
+# Replit
+.replit.nix
+replit.nix
+.config/
+.cache/
+.upm/

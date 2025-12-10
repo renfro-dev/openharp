@@ -1,0 +1,12 @@
+run = "npm run server"
+entrypoint = "src/server.ts"
+
+[nix]
+channel = "stable-23_11"
+
+[deployment]
+run = ["npm", "run", "server"]
+deploymentTarget = "cloudrun"
+
+[env]
+WEBHOOK_PORT = "3000"

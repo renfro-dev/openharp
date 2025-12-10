@@ -1,0 +1,45 @@
+{
+  "name": "context-orchestrator",
+  "version": "1.0.0",
+  "description": "Convert meeting PDFs from OneDrive to Planner and ClickUp tasks",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "context-orchestrator": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "server": "tsx src/server.ts",
+    "workflow": "node complete-workflow.js",
+    "manual": "node manual-workflow.js",
+    "process": "node process-pdf.js"
+  },
+  "keywords": [
+    "onedrive",
+    "planner",
+    "clickup",
+    "task-management",
+    "pdf",
+    "meeting-summary"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.38.0",
+    "@modelcontextprotocol/sdk": "^1.24.3",
+    "@types/express": "^5.0.6",
+    "commander": "^13.0.0",
+    "dotenv": "^16.4.7",
+    "express": "^5.2.1",
+    "inquirer": "^12.0.0",
+    "pdf-parse": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pdf-parse": "^1.1.4",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
