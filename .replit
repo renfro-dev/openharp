@@ -5,7 +5,7 @@ entrypoint = "src/server.ts"
 channel = "stable-23_11"
 
 [deployment]
-run = ["npm", "run", "server"]
+run = ["sh", "-c", "npm run build && npm run start:server"]
 deploymentTarget = "cloudrun"
 
 [env]
