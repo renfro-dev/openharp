@@ -1,76 +1,109 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import type { PlannerTask, ClickUpTask } from '../types.js';
+import type { ClickUpTask } from '../types.js';
 
-let mcpClient: Client | null = null;
+interface ClickUpTaskInput {
+  title: string;
+  description?: string;
+  priority: 'urgent' | 'high' | 'normal' | 'low';
+  dueDate?: string;
+}
 
-function mapPriority(plannerPriority: number): number {
-  // Planner: 1=urgent, 3=high, 5=normal, 9=low
-  // ClickUp: 1=urgent, 2=high, 3=normal, 4=low
-  if (plannerPriority <= 1) return 1; // urgent
-  if (plannerPriority <= 3) return 2; // high
-  if (plannerPriority <= 5) return 3; // normal
-  return 4; // low
+interface ClickUpResponse {
+  id: string;
+  name: string;
+  description?: string;
+  priority?: number;
+  due_date?: string;
+}
+
+const CLICKUP_API_BASE = 'https://api.clickup.com/api/v2';
+
+function mapPriority(priority: 'urgent' | 'high' | 'normal' | 'low'): number {
+  // ClickUp priority levels: 1=urgent, 2=high, 3=normal, 4=low
+  const mapping: Record<string, number> = {
+    urgent: 1,
+    high: 2,
+    normal: 3,
+    low: 4
+  };
+  return mapping[priority] || 3;
 }
 
 /**
- * Get or create ClickUp MCP client
+ * Create task in ClickUp using direct REST API
  */
-async function getMCPClient(): Promise<Client> {
-  if (!mcpClient) {
-    mcpClient = new Client({
-      name: 'context-orchestrator-clickup',
-      version: '1.0.0'
-    }, {
-      capabilities: {}
-    });
+async function createTaskInClickUp(
+  apiKey: string,
+  listId: string,
+  task: ClickUpTaskInput
+): Promise<ClickUpResponse> {
+  const priority = mapPriority(task.priority);
 
-    const transport = new StdioClientTransport({
-      command: 'npx',
-      args: ['-y', '@taazkareem/clickup-mcp-server'],
-      env: {
-        ...process.env,
-        CLICKUP_API_KEY: process.env.CLICKUP_API_KEY || '',
-        CLICKUP_TEAM_ID: process.env.CLICKUP_TEAM_ID || ''
-      }
-    });
+  const body: Record<string, any> = {
+    name: task.title,
+    priority
+  };
 
-    await mcpClient.connect(transport);
-    console.log('[ClickUp] Connected to ClickUp MCP server');
+  if (task.description) {
+    body.description = task.description;
   }
 
-  return mcpClient;
+  if (task.dueDate) {
+    // ClickUp expects timestamp in milliseconds
+    const dueTime = new Date(task.dueDate).getTime();
+    body.due_date = dueTime;
+  }
+
+  try {
+    const response = await fetch(`${CLICKUP_API_BASE}/list/${listId}/task`, {
+      method: 'POST',
+      headers: {
+        'Authorization': apiKey,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`ClickUp API error: ${response.status} ${response.statusText} - ${error}`);
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error(`[ClickUp] Error creating task "${task.title}":`, error);
+    throw error;
+  }
 }
 
 /**
- * Create tasks in ClickUp
- * Creates tasks one by one using the create_task tool from ClickUp MCP server
+ * Create tasks in ClickUp for a specific user
+ * Creates tasks one by one using direct REST API
  */
 export async function createTasksInClickUp(
+  apiKey: string,
   listId: string,
-  tasks: PlannerTask[]
+  tasks: ClickUpTaskInput[]
 ): Promise<ClickUpTask[]> {
-  const client = await getMCPClient();
+  if (!apiKey) {
+    throw new Error('ClickUp API key is required');
+  }
+
   const createdTasks: ClickUpTask[] = [];
 
   for (const task of tasks) {
     try {
-      const result = await client.callTool({
-        name: 'create_task',
-        arguments: {
-          listId,
-          name: task.title,
-          description: task.description || '',
-          priority: mapPriority(task.priority),
-          dueDate: task.dueDateTime || undefined
-        }
+      const response = await createTaskInClickUp(apiKey, listId, task);
+      createdTasks.push({
+        id: response.id,
+        name: response.name,
+        description: response.description,
+        priority: response.priority,
+        due_date: response.due_date
       });
-
-      const clickupTask = JSON.parse((result.content as any)[0].text);
-      createdTasks.push(clickupTask);
-      console.log(`   ✓ Created ClickUp task: ${task.title}`);
+      console.log(`[ClickUp] ✓ Created task: ${task.title}`);
     } catch (error) {
-      console.error(`   ✗ Failed to create ClickUp task "${task.title}":`, error);
+      console.error(`[ClickUp] ✗ Failed to create task "${task.title}":`, error);
       throw error;
     }
   }
@@ -79,12 +112,44 @@ export async function createTasksInClickUp(
 }
 
 /**
- * Close the MCP client connection
+ * Get tasks from a ClickUp list (for deduplication cache)
+ */
+export async function getTasksFromList(
+  apiKey: string,
+  listId: string
+): Promise<Array<{ id: string; name: string }>> {
+  if (!apiKey) {
+    throw new Error('ClickUp API key is required');
+  }
+
+  try {
+    const response = await fetch(`${CLICKUP_API_BASE}/list/${listId}/task?limit=100`, {
+      method: 'GET',
+      headers: {
+        'Authorization': apiKey
+      }
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`ClickUp API error: ${response.status} - ${error}`);
+    }
+
+    const data = await response.json();
+    return (data.tasks || []).map((t: any) => ({
+      id: t.id,
+      name: t.name
+    }));
+  } catch (error) {
+    console.error('[ClickUp] Error fetching tasks from list:', error);
+    throw error;
+  }
+}
+
+/**
+ * No-op function for API compatibility (no MCP client to close)
  */
 export async function closeMCPClient(): Promise<void> {
-  if (mcpClient) {
-    await mcpClient.close();
-    mcpClient = null;
-    console.log('[ClickUp] Closed ClickUp MCP client');
-  }
+  // Direct API calls don't need cleanup
+  console.log('[ClickUp] No MCP client to close (using direct API)');
 }

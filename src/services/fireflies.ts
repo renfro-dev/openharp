@@ -58,6 +58,43 @@ export async function listRecentMeetings(limit: number): Promise<FirefliesMeetin
   }));
 }
 
+export async function listMeetingsByDateRange(
+  fromDate: Date,
+  toDate: Date,
+  limit: number = 50
+): Promise<FirefliesMeeting[]> {
+  // Convert dates to timestamps (Fireflies API uses Unix timestamps in seconds)
+  const fromTimestamp = Math.floor(fromDate.getTime() / 1000);
+  const toTimestamp = Math.floor(toDate.getTime() / 1000);
+
+  const query = `
+    query ListMeetingsByDateRange($fromDate: Long!, $toDate: Long!, $limit: Int!) {
+      transcripts(fromDate: $fromDate, toDate: $toDate, limit: $limit) {
+        id
+        title
+        date
+      }
+    }
+  `;
+
+  type Resp = { transcripts: Array<{ id: string; title: string; date: number }> };
+  const data = await graphqlRequest<Resp>(query, {
+    fromDate: fromTimestamp,
+    toDate: toTimestamp,
+    limit
+  });
+
+  const items = data.transcripts || [];
+  const meetings = items.map(m => ({
+    id: m.id,
+    title: m.title || 'Untitled Meeting',
+    date: new Date(m.date * 1000) // Convert seconds to milliseconds
+  }));
+
+  // Sort by date descending (most recent first)
+  return meetings.sort((a, b) => b.date.getTime() - a.date.getTime());
+}
+
 export async function getMeetingSummaryForExtraction(meetingId: string): Promise<string> {
   const query = `
     query GetTranscript($id: String!) {

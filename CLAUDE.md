@@ -1,283 +1,426 @@
-# Context Orchestrator
+# Context Orchestrator - Web UI
 
-Automatically convert Fireflies.ai meeting transcripts into actionable tasks with team approval via Microsoft Teams before adding to ClickUp.
+Multi-user web application to automatically convert Fireflies.ai meeting transcripts into actionable tasks with intelligent deduplication and team collaboration via ClickUp.
+
+**New Architecture**: Web UI (React) + Serverless API (Vercel) + Supabase Database
 
 See @README.md for complete user documentation and setup instructions.
 
-## Quick Commands
+## Quick Start
 
 ```bash
-# Build and run
-npm run build          # Compile TypeScript to dist/
-npm start              # Run compiled JavaScript
+# Install dependencies
+npm install
 
-# Development (no build needed)
-npm run dev            # Run CLI with tsx
-npm run server         # Start webhook server with tsx
+# Set up environment (copy and fill in values)
+cp .env.example .env
 
-# CLI Commands
-npm run dev -- post-to-teams [--meeting-id <id>]
-npm run dev -- check-approvals [--session-id <id>]
+# Development: Run API and Frontend in parallel
+npm run dev:all
 
-# Production webhook server
-npm run server
+# Or separately:
+npm run dev:api    # API on http://localhost:3001
+npm run dev:web    # Frontend on http://localhost:5173
+
+# Build for production
+npm run build
+
+# Deploy to Vercel
+vercel deploy
 ```
 
-## Architecture Overview
+## New Architecture (2.0)
 
-**Workflow**: Fireflies → Claude → Planner → Teams → ClickUp
-
-### Key Files
-
-- @src/server.ts - Express webhook server (282 lines)
-- @src/index.ts - CLI commands and orchestration (333 lines)
-- @src/types.ts - TypeScript interfaces (90 lines)
-
-### Services (@src/services/)
-
-- @src/services/teams.ts - Teams channel integration (451 lines, largest service)
-- @src/services/planner.ts - Microsoft Planner integration (96 lines)
-- @src/services/clickup.ts - ClickUp task creation (90 lines)
-- @src/services/task-extractor.ts - Claude-based task extraction (84 lines)
-
-### On-Demand MCP Pattern
-
-**Achievement: 94% context reduction (84k → 5.4k tokens)**
-
-This project achieves dramatic context reduction by loading MCP servers only when needed via `npx`:
-
-```typescript
-const transport = new StdioClientTransport({
-  command: 'npx',
-  args: ['-y', '@softeria/ms-365-mcp-server']
-});
+### Data Flow
+```
+User logs in (Microsoft OAuth)
+    ↓
+Select meetings by date range
+    ↓
+Extract tasks with Claude AI
+    ↓
+Run deduplication (semantic + cache check)
+    ↓
+UI displays tasks for review
+    ↓
+Assign tasks to team members
+    ↓
+Create in assigned user's ClickUp
 ```
 
-See @.mcp.json for server configuration.
-See @.claude/rules/mcp.md for implementation patterns.
+### Technology Stack
+
+**Frontend**
+- React 18 + TypeScript
+- Vite for fast development
+- React Router for navigation
+- Axios for HTTP requests
+
+**Backend (API Routes)**
+- Express.js on Vercel serverless
+- Passport.js for Microsoft OAuth
+- TypeScript throughout
+
+**Database**
+- Supabase (PostgreSQL)
+- Row-level security for multi-user
+- Automatic timestamp management
+
+**External Services**
+- Microsoft Azure AD (OAuth)
+- Fireflies.ai (meeting transcripts)
+- Anthropic Claude (task extraction + deduplication)
+- ClickUp (task management)
+
+### Key Services
+
+**Backend Services** (@src/services/)
+
+- @src/services/supabase.ts (250 lines) - Database abstraction
+  - User management, meeting tracking, task storage, deduplication, statistics
+
+- @src/services/auth.ts (100 lines) - Microsoft OAuth
+  - Passport.js Azure AD integration
+  - User configuration management
+
+- @src/services/deduplication.ts (300 lines) - Intelligent duplicate detection
+  - String similarity (Levenshtein distance)
+  - Claude AI semantic analysis
+  - ClickUp cache comparison
+  - Multi-meeting task merging
+
+- @src/services/fireflies.ts - Meeting transcript fetching
+  - New: `listMeetingsByDateRange()` function
+
+- @src/services/clickup.ts - ClickUp task creation
+  - Direct REST API (multi-user ready)
+  - No MCP needed (simpler, faster)
+
+**API Routes** (@api/)
+
+- Authentication (3 routes)
+  - `GET /api/auth/microsoft` - Start OAuth
+  - `GET|POST /api/auth/callback` - OAuth callback
+  - `GET|POST /api/auth/user` - User profile/config
+
+- Meetings (2 routes)
+  - `GET /api/meetings/list?from=DATE&to=DATE` - List by range
+  - `POST /api/meetings/process` - Process + extract tasks
+
+- Tasks (2 routes)
+  - `GET /api/tasks/list` - Get pending tasks
+  - `POST /api/tasks/create` - Create in ClickUp
+
+**Frontend Components** (@web/src/)
+
+- Pages
+  - LoginPage - OAuth login button
+  - DashboardPage - Meeting selection
+  - ProcessingPage - Real-time status
+
+- Components
+  - TaskReviewPanel - Task selection + assignment
+  - TaskCard - Individual task display
+
+- Services
+  - api.ts - HTTP client
+
+### Database Schema
+
+**Core Tables**
+- `users` - Multi-user accounts with ClickUp config
+- `processed_meetings` - Track which meetings have been processed
+- `extracted_tasks` - All extracted tasks with status
+- `clickup_task_cache` - Caching for deduplication
+
+**Views**
+- `pending_tasks` - Tasks ready for creation
+- `processing_history` - User activity stats
+- `duplicate_summary` - Deduplication audit trail
+
+See @sql/schema.sql for complete schema with indexes and triggers.
+
+## Code Organization
+
+```
+context-orchestrator/
+├── api/                       # Vercel serverless functions
+│   ├── auth/
+│   │   ├── microsoft.ts      # OAuth initiation
+│   │   ├── callback.ts       # OAuth callback
+│   │   └── user.ts           # User endpoints
+│   ├── meetings/
+│   │   ├── list.ts           # List meetings
+│   │   └── process.ts        # Process & extract
+│   └── tasks/
+│       ├── list.ts           # Get tasks
+│       └── create.ts         # Create in ClickUp
+│
+├── web/                       # React frontend
+│   ├── src/
+│   │   ├── pages/
+│   │   │   ├── LoginPage.tsx
+│   │   │   ├── DashboardPage.tsx
+│   │   │   └── ProcessingPage.tsx
+│   │   ├── components/
+│   │   │   ├── TaskReviewPanel.tsx
+│   │   │   └── TaskCard.tsx
+│   │   ├── services/
+│   │   │   └── api.ts
+│   │   └── App.tsx
+│   └── vite.config.ts
+│
+├── src/                       # Shared backend services
+│   ├── services/
+│   │   ├── supabase.ts
+│   │   ├── auth.ts
+│   │   ├── deduplication.ts
+│   │   ├── fireflies.ts
+│   │   ├── clickup.ts
+│   │   └── task-extractor.ts
+│   └── types.ts
+│
+├── sql/
+│   └── schema.sql            # PostgreSQL schema
+│
+├── .claude/rules/            # Code conventions
+│   ├── typescript.md
+│   ├── services.md
+│   ├── web-ui.md
+│   └── deployment.md
+│
+├── CLAUDE.md                 # This file
+├── README.md                 # User documentation
+├── DEPLOYMENT_VERCEL.md      # Deployment guide
+├── IMPLEMENTATION_GUIDE.md   # Architecture details
+├── SUPABASE_SETUP.md         # Database setup
+├── .env.example              # Environment template
+├── vercel.json               # Vercel config
+└── package.json
+```
+
+## Environment Configuration
+
+### Required Variables
+
+```env
+# Supabase
+SUPABASE_URL=https://xxxxx.supabase.co
+SUPABASE_ANON_KEY=eyJhbGc...
+SUPABASE_SERVICE_KEY=eyJhbGc...
+
+# Microsoft OAuth
+MICROSOFT_CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+MICROSOFT_CLIENT_SECRET=your_secret
+MICROSOFT_TENANT_ID=common
+MICROSOFT_CALLBACK_URL=http://localhost:5173/auth/callback
+
+# APIs
+FIREFLIES_API_KEY=xxxxx
+ANTHROPIC_API_KEY=sk-ant-xxxxx
+CLICKUP_API_KEY=pk_xxxxx
+
+# Session
+SESSION_SECRET=random_32_char_string
+```
+
+See @.env.example for complete reference with helpful comments.
+
+## Development Workflow
+
+### Local Development
+
+```bash
+# 1. Set up Supabase
+# Create project at supabase.com, run sql/schema.sql
+
+# 2. Configure Azure AD
+# Register app at portal.azure.com, get credentials
+
+# 3. Install and setup
+npm install
+cp .env.example .env
+# Edit .env with your credentials
+
+# 4. Run both frontend and API
+npm run dev:all
+
+# Or in separate terminals:
+npm run dev:api    # http://localhost:3001
+npm run dev:web    # http://localhost:5173
+```
+
+### Testing API Endpoints
+
+```bash
+# Get available meetings
+curl http://localhost:3001/api/meetings/list?from=2024-12-01&to=2024-12-31
+
+# Process meetings
+curl -X POST http://localhost:3001/api/meetings/process \
+  -H "Content-Type: application/json" \
+  -d '{"meetingIds": ["meeting-id-1"]}'
+
+# Get pending tasks
+curl http://localhost:3001/api/tasks/list
+```
 
 ## Code Conventions
 
 See @.claude/rules/ for detailed guidelines:
 
-- @.claude/rules/typescript.md - TypeScript conventions and module patterns
-- @.claude/rules/mcp.md - On-demand MCP pattern, client lifecycle, authentication
-- @.claude/rules/services.md - Service architecture, state management, error handling
-- @.claude/rules/webhook.md - Webhook server patterns, duplicate prevention
-- @.claude/rules/deployment.md - Replit deployment and production setup
-
-## Environment Setup
-
-### Prerequisites
-
-- Node.js 22+
-- Access to Fireflies, Microsoft 365, ClickUp, Anthropic API
-
-### Quick Start
-
-1. Copy environment template:
-   ```bash
-   cp .env.example .env
-   ```
-
-2. Configure @.env with required values:
-   - FIREFLIES_API_KEY, ANTHROPIC_API_KEY
-   - PLANNER_PLAN_ID, TEAMS_TEAM_NAME, TEAMS_CHANNEL_NAME
-   - CLICKUP_API_KEY, CLICKUP_LIST_ID, CLICKUP_TEAM_ID
-
-   See @README.md lines 54-76 for where to find these values.
-
-3. Authenticate with Microsoft 365:
-   ```bash
-   npx -y @softeria/ms-365-mcp-server --org-mode --login
-   ```
-
-   Sign in with: **jrenfro@cageandmiles.com**
-
-4. Install dependencies and build:
-   ```bash
-   npm install
-   npm run build
-   ```
+- @.claude/rules/typescript.md - TypeScript patterns, ES modules
+- @.claude/rules/services.md - Service layer patterns, error handling
+- @.claude/rules/web-ui.md - React conventions, component structure
+- @.claude/rules/deployment.md - Vercel deployment, environment setup
 
 ## State Management
 
-### Files in .state/ Directory
+**Database-Backed (No Local Files)**
+- User profiles and configuration → Supabase users table
+- Meeting processing history → Supabase processed_meetings table
+- Extracted tasks → Supabase extracted_tasks table
+- Deduplication tracking → is_duplicate flags + duplicate_of_task_id
+- ClickUp creation tracking → clickup_task_id + created_in_clickup_at
 
-- `.state/processed-meetings.json` - Tracks processed Fireflies meetings (duplicate prevention)
-- `.state/teams-approval.json` - Tracks Teams approval sessions and task status
-
-### Session-Based Workflow
-
-The Teams approval workflow uses session-based state:
-
-1. **post-to-teams**: Creates session, posts tasks to Teams, saves state
-2. **check-approvals**: Loads session, checks reactions, creates ClickUp tasks, updates state
-
-See @src/services/teams.ts lines 63-90 for session management implementation.
-
-## Two Modes of Operation
-
-### 1. Webhook Mode (Automatic - Production)
-
-Fireflies webhook triggers automatic processing:
-
-```bash
-npm run server  # Start webhook server
-```
-
-**Endpoints**:
-- `POST /webhook/fireflies` - Fireflies webhook endpoint
-- `POST /trigger/:meetingId` - Manual trigger for testing
-- `GET /health` - Health check
-
-See @REPLIT_DEPLOY.md for step-by-step Replit deployment guide.
-
-### 2. CLI Mode (Manual - Development)
-
-Manual workflow via command line:
-
-```bash
-# Post tasks to Teams
-npm run dev -- post-to-teams --meeting-id abc123
-
-# Later, check approvals and create ClickUp tasks
-npm run dev -- check-approvals --session-id abc123-1733774400000
-```
+Benefits:
+- ✅ Multi-user support (each user has isolated data)
+- ✅ Persistent history across sessions
+- ✅ No .state/ directory needed
+- ✅ Easy backups with Supabase
+- ✅ Real-time data sync
 
 ## Authentication
 
-### Microsoft 365
+### Microsoft OAuth Flow
 
-Uses device code OAuth flow (tokens cached locally):
+1. User clicks "Login with Microsoft"
+2. Redirect to `GET /api/auth/microsoft`
+3. Passport initiates Azure AD login
+4. User signs in at Microsoft portal
+5. Redirect back to `GET /api/auth/callback`
+6. Session created, user redirected to dashboard
 
-```bash
-npx -y @softeria/ms-365-mcp-server --org-mode --login
-```
+### Session Management
 
-**Critical**: Use `--org-mode` flag for Teams integration.
+- Passport.js serializes user ID to session
+- Express-session stores session in memory (can use Redis for production)
+- All API endpoints check `req.isAuthenticated()`
 
-**Account**: jrenfro@cageandmiles.com
+## Deduplication Strategy
 
-**Token Location**: `~/.ms365-mcp-server/`
+**Three-Layer Approach**
 
-### Fireflies GraphQL API
+1. **String Similarity** (Pre-filter)
+   - Levenshtein distance
+   - Identifies obvious duplicates quickly
+   - Reduces Claude API calls
 
-Direct API access using API key (no OAuth needed).
+2. **Claude AI** (Semantic Analysis)
+   - Compares task descriptions
+   - Understands context and intent
+   - Catches subtle duplicates
 
-### ClickUp API
+3. **ClickUp Cache** (Against Existing)
+   - Compare with user's ClickUp tasks
+   - Prevent creating duplicate tasks
+   - Smart merging of similar tasks
 
-REST API with API key authentication.
-
-### Anthropic Claude API
-
-Direct REST API via @anthropic-ai/sdk package.
-
-**Model**: claude-opus-4-1-20250805
+Result: Marked in database as `is_duplicate = true` with reference to original
 
 ## Deployment
 
-For production deployment to Replit, see @REPLIT_DEPLOY.md (comprehensive step-by-step guide).
+### To Vercel
 
-For webhook setup and configuration, see @WEBHOOK_SETUP.md.
+```bash
+# 1. Push to GitHub
+git add .
+git commit -m "Deploy to Vercel"
+git push origin main
 
-**Configuration**: @.replit file
+# 2. Connect to Vercel (first time only)
+vercel
 
-## MCP Servers
+# 3. Add environment secrets in Vercel dashboard
+# Settings → Environment Variables
 
-This project uses three MCP servers:
-
-1. **@softeria/ms-365-mcp-server** (Planner)
-   - Default mode
-   - Tools: create-planner-task
-
-2. **@softeria/ms-365-mcp-server --org-mode** (Teams)
-   - Requires --org-mode flag
-   - Tools: list-joined-teams, list-team-channels, send-channel-message, get-channel-message
-
-3. **@taazkareem/clickup-mcp-server** (ClickUp)
-   - Requires CLICKUP_API_KEY and CLICKUP_TEAM_ID in environment
-   - Tools: create_task
-
-See @.mcp.json for complete configuration.
-See @.claude/rules/mcp.md for usage patterns and gotchas.
-
-## Important Notes
-
-### MS365 MCP Parameter Naming
-
-**CRITICAL**: MS365 MCP tools use camelCase parameters (not kebab-case):
-
-```typescript
-// Correct
-await client.callTool({
-  name: 'list-team-channels',
-  arguments: { teamId: '...' }  // camelCase
-});
-
-// Wrong - will fail
-await client.callTool({
-  name: 'list-team-channels',
-  arguments: { 'team-id': '...' }  // kebab-case
-});
+# 4. Deploy
+vercel deploy --prod
 ```
 
-See @.claude/rules/mcp.md lines 75-96 for complete tool calling conventions.
-
-### Reaction Detection
-
-Microsoft Graph API returns actual emoji characters:
-
-```typescript
-// reaction.reactionType === '👍'  (not 'like')
-```
-
-See @src/services/teams.ts lines 249-257 for approval detection logic.
-
-## Project Structure
-
-```
-context-orchestrator/
-├── src/
-│   ├── index.ts              # CLI commands
-│   ├── server.ts             # Webhook server
-│   ├── types.ts              # TypeScript interfaces
-│   └── services/
-│       ├── planner.ts        # Microsoft Planner
-│       ├── teams.ts          # Microsoft Teams
-│       ├── clickup.ts        # ClickUp
-│       └── task-extractor.ts # Claude AI
-├── .claude/
-│   └── rules/                # Code conventions
-├── .state/                   # State tracking (not in git)
-├── CLAUDE.md                 # This file
-├── README.md                 # User documentation
-├── REPLIT_DEPLOY.md          # Deployment guide
-├── WEBHOOK_SETUP.md          # Webhook configuration
-├── .mcp.json                 # MCP server config
-├── .env.example              # Environment template
-└── package.json              # Dependencies
-```
+See @DEPLOYMENT_VERCEL.md for detailed step-by-step guide.
 
 ## Troubleshooting
 
-### Common Issues
+### OAuth Issues
+```
+Error: Invalid redirect_uri
+→ Check MICROSOFT_CALLBACK_URL matches Azure AD app config
+```
 
-1. **Authentication failed**: Re-run `npx -y @softeria/ms-365-mcp-server --org-mode --login`
-2. **Webhook not receiving**: Check Fireflies webhook configuration
-3. **Tasks not posting to Teams**: Verify TEAMS_TEAM_NAME and TEAMS_CHANNEL_NAME
-4. **MCP parameter errors**: Ensure camelCase parameters (see @.claude/rules/mcp.md)
+### Database Issues
+```
+Error: Connection refused
+→ Verify SUPABASE_URL is correct
+→ Check API keys haven't expired
+```
 
-### Debug Logging
+### Task Creation Failures
+```
+Error: Unauthorized
+→ Verify CLICKUP_API_KEY is valid
+→ Check user's clickup_list_id is configured
+```
+
+### Claude Deduplication
+```
+Error: Rate limited (429)
+→ Reduce batch size or add delay between requests
+```
+
+See @IMPLEMENTATION_GUIDE.md for detailed troubleshooting.
+
+## Monitoring & Debugging
+
+### Service Logging
 
 All services use prefixed logging:
-- `[Planner]` - planner.ts
-- `[Teams]` - teams.ts
-- `[ClickUp]` - clickup.ts
-- `[Server]` - server.ts
+```
+[Supabase] - Database operations
+[Auth] - Authentication/OAuth
+[Dedup] - Deduplication processing
+[ClickUp] - ClickUp API operations
+[API] - API route handlers
+```
 
-Check console output for detailed operation logs.
+### Debug Mode
+
+Set in .env:
+```env
+DEBUG=context-orchestrator:*
+```
+
+### Database Inspection
+
+```sql
+-- Active users
+SELECT email, created_at FROM users ORDER BY created_at DESC;
+
+-- Processing activity
+SELECT COUNT(*), DATE(processed_at) FROM processed_meetings GROUP BY DATE(processed_at);
+
+-- Dedup effectiveness
+SELECT COUNT(*), SUM(CASE WHEN is_duplicate THEN 1 ELSE 0 END) FROM extracted_tasks;
+```
 
 ## For Claude Code Users
 
-This file (CLAUDE.md) and the @.claude/rules/ directory follow official Claude Code best practices for project memory and documentation organization.
+This file (CLAUDE.md) and the @.claude/rules/ directory follow Claude Code best practices for project memory and documentation organization.
+
+Key files referenced:
+- @README.md - User guide
+- @IMPLEMENTATION_GUIDE.md - Architecture reference
+- @SUPABASE_SETUP.md - Database setup
+- @DEPLOYMENT_VERCEL.md - Deployment steps
+- @sql/schema.sql - Database schema
+- @.claude/rules/ - Code conventions
