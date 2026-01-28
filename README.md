@@ -1,6 +1,6 @@
 # OpenHarp
 
-A template for building an AI-powered meeting-to-task orchestration system. Automatically extract actionable tasks from Fireflies.ai meeting transcripts using Claude AI and create them in ClickUp.
+An open-source template for building an AI-powered meeting-to-task orchestration system. Extract actionable tasks from Fireflies.ai meeting transcripts using Claude AI and create them in the appropriate list in ClickUp. 
 
 ## Features
 
