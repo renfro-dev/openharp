@@ -5,6 +5,7 @@ dist/
 *.log
 .DS_Store
 .npm/
+.npm-cache/
 
 # MCP
 .mcp.local.json
